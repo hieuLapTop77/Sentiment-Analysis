@@ -12,6 +12,7 @@ import time
 import json
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
+import traceback
 ########################################################################
 
 positive_words = [
@@ -207,17 +208,13 @@ def handle_comment(cmt):
 
 def predict(model_pkl_file, id = None, comment = None):
     df_new = pd.read_csv('files/matrix_comment.csv.gz', compression='gzip')
-    try:
-        df_new = df_new.drop(['Unnamed: 0'], axis=1)
-    except KeyError:
-       pass
     cmt = None
     id_res = None
     with open(model_pkl_file, 'rb') as file:
         loaded_model = pickle.load(file)
     if id is not None and comment is None:
         if id in df_new['ID'].unique().tolist():
-            id_res = df_new.loc[df_new['ID'] == id].drop(columns=['ID'])
+            id_res = df_new.loc[df_new['ID'] == id].drop(columns=['ID', 'Label'])
         else:
             print('Not found restaurant')
         prediction = loaded_model.predict(id_res)
@@ -226,128 +223,197 @@ def predict(model_pkl_file, id = None, comment = None):
         prediction = loaded_model.predict(cmt)
     return prediction
 
-def get_pos(lat,lng):
-    return lat,lng
+def filter_adjectives(text) -> list:
+    list_obj = []
+    tags = pos_tag(text)
+    for word, tag in tags:
+        if tag.startswith('A'):
+            if word.lower() not in list_obj:
+                list_obj.append(word.lower())
+    return list_obj
 
 def get_id_input():
     id = None
     while id is None:
-        id = st.number_input("ID Restaurant from 1 to 1621", min_value=1, max_value=1621)
+        id = st.number_input("ID Restaurant from 1 to 1621", min_value=1, max_value=1621, value = 15)
     return id
 
+def handle_comment_(df_comment, id):
+    df_pos_sort = None
+    df_neg_sort = None
+    comment_pos = []
+    time_pos = []
+    pos = []
+    idx_pos = []
+    comment_neg = []
+    time_neg = []
+    neg = []
+    idx_neg = []
+    try:
+        list_index = df_comment[df_comment['IDRestaurant'] == id]['Comment'].index
+        output = predict(model_pkl_file, id = id)
+        for i, value in enumerate(output):
+            if value == 0 or value == '0':
+                if len(df_comment['Comment'][list_index[i]]) > 0:
+                    comment_neg.append(df_comment['Comment'][list_index[i]])
+                    time_neg.append(df_comment['Time'][list_index[i]])
+                else:
+                    comment_neg.append("")
+                    time_neg.append('')
+                neg.append("Tiêu cực")
+                idx_neg.append(list_index[i])
+            else:
+                if len(df_comment['Comment'][list_index[i]]) > 0:
+                    comment_pos.append(df_comment['Comment'][list_index[i]])
+                    time_pos.append(df_comment['Time'][list_index[i]])
+                else:
+                    comment_pos.append("")
+                    time_pos.append('')
+                pos.append("Tích cực")
+                idx_pos.append(list_index[i])
+
+        result_pos = {
+            "ID": idx_pos,
+            "Comment": comment_pos,
+            "Time": time_pos,
+            "Predict": pos
+        }
+
+        df_pos = pd.DataFrame(result_pos)
+        result_neg = {
+            "ID": idx_neg,
+            "Comment": comment_neg,
+            "Time": time_neg,
+            "Predict": neg
+        }
+        
+        df_neg = pd.DataFrame(result_neg)
+        df_pos_sort = df_pos.sort_values(by='Time', ascending=False)
+        df_neg_sort = df_neg.sort_values(by='Time', ascending=False)
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+        # Print the traceback
+        traceback.print_exc()
+
+    return df_pos_sort, df_neg_sort
 
 def main():
+    # st.set_page_config(layout="wide")
     # 1. Read data
     st.title("Data Science Project")
     st.write("## Sentiment Analysis")
   
     menu = ["Thuật toán", "Thông tin về thuật toán", "About"]
     choice = st.sidebar.selectbox('Menu', menu)
-    if choice == 'Thuật toán':    
+    if choice == 'Thuật toán':  
+        # st.set_page_config(layout="wide")  
         df = pd.read_csv('files/Restaurants.csv')
         df_comment = pd.read_csv('files/2_Reviews.csv')
         st.subheader("Rating classification")
         on = st.toggle('ID Restaurant')
         if on:
-            map_vietnam = folium.Map(location=[10.809929141198806, 106.64572837501036], zoom_start=10)
+            map_vietnam = folium.Map(location=[10.809929141198806, 106.64572837501036], zoom_start=10, width=800, height=600)
             map_vietnam.add_child(folium.LatLngPopup())
             choose = st.radio('Chọn phương thức', ['Nhập ID nhà hàng', 'Chọn ID nhà hàng'])
             id = None
             if choose == 'Nhập ID nhà hàng':
                 id = get_id_input()
             else:
-                id = st.selectbox('Vui lòng chọn ID nhà hàng', tuple(df['ID']))
+                id = st.selectbox('Vui lòng chọn ID nhà hàng', tuple(df['ID']), index=None)
             
 
             result = {
                "ID" : id,
                "Name": df.loc[df['ID']==id]['Restaurant'],
                "Price": df.loc[df['ID']==id]['Price'],
-               "Rating": str(df_comment[df_comment['IDRestaurant'] == id]['Rating'].mean()) + '/10'
+               "Rating": str(df_comment[df_comment['IDRestaurant'] == id]['Rating'].mean().round(2)) + '/10'
             }
             data = pd.DataFrame(result)
             st.dataframe(data)
-            st.write('Một vài bình luận')
-            comment_pos = []
-            pos = []
-            idx_pos = []
-            comment_neg = []
-            neg = []
-            idx_neg = []
-            try:
-                # df_ = df_comment[df_comment['IDRestaurant'] == id]['Comment'][:3].to_frame()
-                list_index = df_comment[df_comment['IDRestaurant'] == id]['Comment'].index
-                output = predict(model_pkl_file, id = id)
-                for i in range(len(output)):
-                    if output[i] == 0 or output[i] == '0':
-                        if len(df_comment['Comment'][list_index[i]]) > 0:
-                            comment_neg.append(df_comment['Comment'][list_index[i]])
-                        else:
-                           comment_neg.append("")
-                        neg.append("Tiêu cực")
-                        idx_neg.append(list_index[i])
-                    else:
-                        if len(df_comment['Comment'][list_index[i]]) > 0:
-                            comment_pos.append(df_comment['Comment'][list_index[i]])
-                        else:
-                           comment_pos.append("")
-                        pos.append("Tích cực")
-                        idx_pos.append(list_index[i])
-
-                result_pos = {
-                   "ID": idx_pos,
-                   "Comment": comment_pos,
-                   "Rating": pos
-                }
-
-                df_pos = pd.DataFrame(result_pos)
-                st.dataframe(df_pos[:11])
-                result_neg = {
-                   "ID": idx_neg,
-                   "Comment": comment_neg,
-                   "Rating": neg
-                }
-                
-                df_neg = pd.DataFrame(result_neg)
-                st.dataframe(df_neg[:11])
-            except Exception:
-               pass
 
             folium.Marker([df.loc[id]['latitude'], df.loc[id]['longitude']]).add_to(map_vietnam)
-            try:
-            
-                text = ' '.join(df_comment[df_comment['IDRestaurant'] == id]['Comment'])
-                wordcloud = WordCloud(width=800, height=400, random_state=42, background_color='white', max_words=40).generate(text)
 
-                # Trực quan hóa WordCloud
-                plt.figure(figsize=(10, 5))
-                plt.imshow(wordcloud, interpolation='bilinear')
-                plt.axis('off')
-                plt.title('Word Cloud - Most Frequent Words in Comments')
-                plt.show()
-                st.set_option('deprecation.showPyplotGlobalUse', False)
-                st.pyplot()
-            except Exception:
-               pass
+            df_pos_sort, df_neg_sort = handle_comment_(df_comment, id)
+
+            st.markdown("##### :blue[10 bình luận mới nhất về tích cực]")
+            st.dataframe(df_pos_sort.head(10))
+            st.markdown("##### :blue[10 bình luận mới nhất về tiêu cực]")
+            st.dataframe(df_neg_sort.head(10))
+            
+
+            rows = st.columns(2)
+            try:
+                text1 = ' '.join(df_pos_sort['Comment'])
+                list_obj1 = filter_adjectives(text1)
+                if len(list_obj1) == 0:
+                   list_obj1 = ["No Positives"]
+                # Tạo WordCloud cho comment tích cực
+                wordcloud1 = WordCloud(width=400, height=400, random_state=42, background_color='white', max_words=20).generate(' '.join(list_obj1))
+                
+                # Tạo WordCloud cho comment tiêu cực
+                text2 = ' '.join(df_neg_sort['Comment'])
+                list_obj2 = filter_adjectives(text2)
+                if len(list_obj1) == 0:
+                   list_obj1 = ["No Negatives"]
+                wordcloud2 = WordCloud(width=400, height=400, random_state=42, background_color='white', max_words=20).generate(' '.join(list_obj2))
+
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+                ax1.imshow(wordcloud1, interpolation='bilinear')
+                ax1.axis("off")
+                ax1.set_title('WordCloud Positive')
+
+                ax2.imshow(wordcloud2, interpolation='bilinear')
+                ax2.axis("off")
+                ax2.set_title('WordCloud Negative')
+
+                # Streamlit
+                st.pyplot(fig)
+
+            except Exception as e:
+                pass
             folium_static(map_vietnam)
 
         else:
-            
-            map_vietnam = folium.Map(location=[10.809929141198806, 106.64572837501036], zoom_start=10)
-            map_vietnam.add_child(folium.LatLngPopup())
-            for index, row in df.iterrows():
-                folium.Marker([row['latitude'], row['longitude']]).add_to(map_vietnam)
+            btn = st.radio("Comment or upload", ['Comment', 'Upload new comment'])
+            if btn == 'Comment':
+                map_vietnam = folium.Map(location=[10.809929141198806, 106.64572837501036], zoom_start=10)
+                map_vietnam.add_child(folium.LatLngPopup())
+                for index, row in df.iterrows():
+                    folium.Marker([row['latitude'], row['longitude']]).add_to(map_vietnam)
 
-            # # Hiển thị bản đồ trong Streamlit
-            st.subheader('Các nhà hàng tại Thành phố Hồ Chí Minh')
-            folium_static(map_vietnam)
-            title = st.text_input("Comment")
-            if len(title) > 0:
-                output = predict(model_pkl_file, comment = title)
-                if output[0] == 0 or output[0] == '0':
-                    st.write(f'Bình luận {title} này là tiêu cực')
-                else:
-                    st.write(f'Bình luận {title} này là tích cực')
+                # # Hiển thị bản đồ trong Streamlit
+                st.subheader('Các nhà hàng tại Thành phố Hồ Chí Minh')
+                folium_static(map_vietnam)
+                title = st.text_input("Comment")
+                if len(title) > 0:
+                    output = predict(model_pkl_file, comment = title)
+                    if output[0] == 0 or output[0] == '0':
+                        st.write(f'Bình luận {title} này là tiêu cực')
+                    else:
+                        st.write(f'Bình luận {title} này là tích cực')
+            else:
+                try:
+                    flag = False
+                    uploaded_files = st.file_uploader("Choose a file with type csv", accept_multiple_files=False, type=['csv'])
+                    df = None
+                    if uploaded_files is not None:
+                        df = pd.read_csv(uploaded_files, header=None)
+                        st.dataframe(df)
+                        flag = True 
+                    if flag:
+                        # if df.loc[1]['Comment']:
+                        data = df[1][1:]
+                        for i in data:
+                            output = predict(model_pkl_file, comment = i)
+                            if output[0] == 0 or output[0] == '0':
+                                st.write(f'Bình luận {i} này là tiêu cực')
+                            else:
+                                st.write(f'Bình luận {i} này là tích cực')
+        
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
+                    # Print the traceback
+                    traceback.print_exc()
 
 
     elif choice == 'Thông tin về thuật toán':
@@ -361,34 +427,34 @@ def main():
         json_data = """
         {
             "0": {
-                "precision": 0.87,
-                "recall": 0.89,
-                "f1-score": 0.88,
-                "support": 3944
+                "precision": 0.88,
+                "recall": 0.94,
+                "f1-score": 0.91,
+                "support": 4516
             },
             "1": {
-                "precision": 0.89,
+                "precision": 0.94,
                 "recall": 0.87,
-                "f1-score": 0.88,
-                "support": 3927
+                "f1-score": 0.90,
+                "support": 4509
             },
             "accuracy": {
                 "precision": "",
                 "recall": "",
-                "f1-score": 0.88,
-                "support": 7871
+                "f1-score": 0.91,
+                "support": 9025
             },
             "macro avg": {
-                "precision": 0.88,
-                "recall": 0.88,
-                "f1-score": 0.88,
-                "support": 7871
+                "precision": 0.91,
+                "recall": 0.91,
+                "f1-score": 0.91,
+                "support": 9025
             },
             "weighted avg": {
-                "precision": 0.88,
-                "recall": 0.88,
-                "f1-score": 0.88,
-                "support": 7871
+                "precision": 0.91,
+                "recall": 0.91,
+                "f1-score": 0.91,
+                "support": 9025
             }
         }
         """
@@ -417,4 +483,3 @@ def main():
 
 if __name__ == "__main__":
    main()
-
